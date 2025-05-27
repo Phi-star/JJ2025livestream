@@ -14,114 +14,146 @@ document.addEventListener('DOMContentLoaded', function() {
     const streamActiveModal = document.getElementById('streamActiveModal');
     const closeModalBtn = document.getElementById('closeModalBtn');
 
-    // State variables
-    let isStreaming = false;
-    let streamerId = null;
+    // WebSocket and WebRTC variables
+    let ws;
     let peerConnection;
     let localStream;
-    let currentStreamerSocket;
+    let isBroadcaster = false;
 
-    // Simulated WebSocket connection (in a real app, you'd connect to your server)
-    function setupWebSocket() {
-        // This is a simulation - in a real app, you'd connect to your WebSocket server
-        console.log("Connecting to WebSocket server...");
-        
-        // Simulate connection
-        setTimeout(() => {
-            console.log("WebSocket connection established");
-        }, 1000);
+    // Initialize WebSocket connection
+    function initWebSocket() {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const host = window.location.host;
+        ws = new WebSocket(`${protocol}//${host}`);
+
+        ws.onopen = () => {
+            console.log('Connected to signaling server');
+        };
+
+        ws.onmessage = async (message) => {
+            const data = JSON.parse(message.data);
+            
+            if (data.type === 'offer') {
+                if (isBroadcaster) return;
+                
+                // This would be for viewer mode (not used in broadcaster)
+            } else if (data.type === 'answer') {
+                // Handle answer from viewer
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(data));
+            } else if (data.type === 'candidate') {
+                // Add ICE candidate
+                try {
+                    await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+                } catch (e) {
+                    console.error('Error adding ICE candidate:', e);
+                }
+            }
+        };
+
+        ws.onclose = () => {
+            console.log('Disconnected from signaling server');
+            if (isBroadcaster) {
+                stopStreaming();
+            }
+        };
     }
 
-    // Check if stream is already active
-    function checkStreamStatus() {
-        // In a real app, you'd check with your server
-        // For this demo, we'll assume no one is streaming initially
-        return false;
-    }
-
-    // Start watching the live stream
-    watchBtn.addEventListener('click', function() {
-        if (!isStreaming) {
-            streamStatus.innerHTML = '<p>No one is currently streaming. Check back later or start the stream yourself!</p>';
-            streamStatus.style.backgroundColor = 'rgba(231, 76, 60, 0.2)';
-            streamStatus.style.borderLeft = '4px solid var(--error-color)';
-            return;
-        }
-
-        videoContainer.classList.remove('hidden');
-        liveIndicator.classList.remove('hidden');
-        
-        // In a real app, you'd connect to the streamer's video feed via WebRTC
-        // For this demo, we'll simulate it with a placeholder
-        liveVideo.srcObject = null;
-        liveVideo.src = 'https://sample-videos.com/video123/mp4/720/big_buck_bunny_720p_1mb.mp4';
-        liveVideo.play();
-    });
-
-    // Request to start live streaming
-    streamBtn.addEventListener('click', function() {
-        if (isStreaming && streamerId !== 'local') {
-            streamActiveModal.classList.remove('hidden');
-            return;
-        }
-
-        if (isStreaming && streamerId === 'local') {
-            // You're already streaming
-            return;
-        }
-
-        // Request camera and microphone access
-        permissionModal.classList.remove('hidden');
-    });
-
-    // Handle permission to access media devices
-    allowBtn.addEventListener('click', function() {
-        permissionModal.classList.add('hidden');
-        startStreaming();
-    });
-
-    denyBtn.addEventListener('click', function() {
-        permissionModal.classList.add('hidden');
-        alert('You need to allow camera and microphone access to start streaming.');
-    });
-
-    // Close the stream active modal
-    closeModalBtn.addEventListener('click', function() {
-        streamActiveModal.classList.add('hidden');
-    });
-
-    // Start the streaming process
+    // Start streaming as broadcaster
     async function startStreaming() {
         try {
-            // Get user media
-            localStream = await navigator.mediaDevices.getUserMedia({
-                video: true,
-                audio: true
-            });
+            // Get user media (both front and back camera if available)
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const videoDevices = devices.filter(device => device.kind === 'videoinput');
+            
+            let stream;
+            
+            if (videoDevices.length > 1) {
+                // Try to get back camera
+                stream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        facingMode: { exact: 'environment' },
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    },
+                    audio: true
+                });
+            } else {
+                // Fallback to any camera
+                stream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    },
+                    audio: true
+                });
+            }
 
-            // In a real app, you'd send this stream to viewers via WebRTC
-            // For this demo, we'll just display it locally
+            localStream = stream;
             videoContainer.classList.remove('hidden');
             liveVideo.srcObject = localStream;
             liveIndicator.classList.remove('hidden');
             
+            // Notify server we're the broadcaster
+            isBroadcaster = true;
+            ws.send(JSON.stringify({ type: 'broadcaster' }));
+            
             // Update UI
-            isStreaming = true;
-            streamerId = 'local';
             streamStatus.innerHTML = '<p>You are currently streaming live!</p>';
             streamStatus.style.backgroundColor = 'rgba(46, 204, 113, 0.2)';
             streamStatus.style.borderLeft = '4px solid var(--success-color)';
-            
-            // Change stream button text
             streamBtn.innerHTML = '<i class="fas fa-stop-circle"></i> Stop Streaming';
             
-            // In a real app, you'd notify the server you're streaming
-            console.log("Streaming started - notifying server");
-            
+            // Setup WebRTC
+            setupWebRTC();
+
         } catch (error) {
             console.error('Error accessing media devices:', error);
             alert('Could not access camera or microphone. Please check your permissions.');
         }
+    }
+
+    // Setup WebRTC peer connection
+    function setupWebRTC() {
+        const configuration = {
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' },
+                { urls: 'stun:stun2.l.google.com:19302' }
+                // Add your TURN servers here if needed
+            ]
+        };
+
+        peerConnection = new RTCPeerConnection(configuration);
+
+        // Add local stream to connection
+        localStream.getTracks().forEach(track => {
+            peerConnection.addTrack(track, localStream);
+        });
+
+        // ICE candidate handler
+        peerConnection.onicecandidate = (event) => {
+            if (event.candidate) {
+                ws.send(JSON.stringify({
+                    type: 'candidate',
+                    candidate: event.candidate,
+                    target: 'viewer'
+                }));
+            }
+        };
+
+        // Create offer for viewers
+        peerConnection.createOffer()
+            .then(offer => peerConnection.setLocalDescription(offer))
+            .then(() => {
+                ws.send(JSON.stringify({
+                    type: 'offer',
+                    offer: peerConnection.localDescription,
+                    target: 'viewer'
+                }));
+            })
+            .catch(error => {
+                console.error('Error creating offer:', error);
+            });
     }
 
     // Stop streaming
@@ -131,23 +163,57 @@ document.addEventListener('DOMContentLoaded', function() {
             localStream = null;
         }
         
+        if (peerConnection) {
+            peerConnection.close();
+            peerConnection = null;
+        }
+        
+        if (isBroadcaster) {
+            ws.send(JSON.stringify({ type: 'disconnect' }));
+            isBroadcaster = false;
+        }
+        
         videoContainer.classList.add('hidden');
         liveIndicator.classList.add('hidden');
         
-        isStreaming = false;
-        streamerId = null;
         streamStatus.innerHTML = '<p>Live stream is currently offline</p>';
         streamStatus.style.backgroundColor = 'rgba(231, 76, 60, 0.2)';
         streamStatus.style.borderLeft = '4px solid var(--error-color)';
-        
-        // Reset stream button
         streamBtn.innerHTML = '<i class="fas fa-broadcast-tower"></i> Start Live Stream';
-        
-        // In a real app, you'd notify the server you've stopped streaming
-        console.log("Streaming stopped - notifying server");
     }
 
-    // Toggle fullscreen
+    // Event listeners
+    streamBtn.addEventListener('click', function() {
+        if (isBroadcaster) {
+            stopStreaming();
+            return;
+        }
+
+        // Check if someone is already streaming
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            permissionModal.classList.remove('hidden');
+        } else {
+            alert('Not connected to server. Please refresh the page.');
+        }
+    });
+
+    watchBtn.addEventListener('click', function() {
+        window.location.href = '/viewer.html';
+    });
+
+    allowBtn.addEventListener('click', function() {
+        permissionModal.classList.add('hidden');
+        startStreaming();
+    });
+
+    denyBtn.addEventListener('click', function() {
+        permissionModal.classList.add('hidden');
+    });
+
+    closeModalBtn.addEventListener('click', function() {
+        streamActiveModal.classList.add('hidden');
+    });
+
     fullscreenBtn.addEventListener('click', function() {
         if (!document.fullscreenElement) {
             videoContainer.requestFullscreen().catch(err => {
@@ -158,27 +224,10 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
-    // Exit video view
     exitBtn.addEventListener('click', function() {
-        if (streamerId === 'local') {
-            stopStreaming();
-        } else {
-            videoContainer.classList.add('hidden');
-            liveIndicator.classList.add('hidden');
-            if (liveVideo.srcObject) {
-                liveVideo.srcObject.getTracks().forEach(track => track.stop());
-                liveVideo.srcObject = null;
-            }
-        }
+        stopStreaming();
     });
 
     // Initialize
-    setupWebSocket();
-    isStreaming = checkStreamStatus();
-
-    // In a real app, you'd have WebSocket listeners for:
-    // - New streamer connected
-    // - Streamer disconnected
-    // - ICE candidates
-    // - SDP offers/answers
+    initWebSocket();
 });
