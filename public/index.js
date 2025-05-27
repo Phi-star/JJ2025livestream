@@ -21,13 +21,15 @@ document.addEventListener('DOMContentLoaded', function() {
   let isBroadcaster = false;
   let reconnectAttempts = 0;
   const maxReconnectAttempts = 5;
-  const reconnectDelay = 1000;
 
   // Initialize WebSocket connection
   function initWebSocket() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
-    ws = new WebSocket(`${protocol}//${host}`);
+    const wsUrl = `${protocol}//${host}/api/ws`;
+
+    console.log('Connecting to WebSocket:', wsUrl);
+    ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
       console.log('Connected to signaling server');
@@ -68,12 +70,10 @@ document.addEventListener('DOMContentLoaded', function() {
     ws.onclose = () => {
       console.log('WebSocket disconnected');
       if (reconnectAttempts < maxReconnectAttempts) {
-        const delay = Math.min(reconnectDelay * (reconnectAttempts + 1), 5000);
-        console.log(`Reconnecting in ${delay}ms...`);
+        const delay = Math.min(1000 * (reconnectAttempts + 1), 5000);
+        console.log(`Attempting reconnect in ${delay}ms...`);
         setTimeout(initWebSocket, delay);
         reconnectAttempts++;
-      } else {
-        alert('Connection lost. Please refresh the page.');
       }
     };
   }
@@ -81,25 +81,33 @@ document.addEventListener('DOMContentLoaded', function() {
   // Start streaming as broadcaster
   async function startStreaming() {
     try {
-      // Get available cameras
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const videoDevices = devices.filter(device => device.kind === 'videoinput');
-      
-      let constraints = {
+      // Get high quality media
+      const constraints = {
         video: {
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          facingMode: { ideal: 'environment' } // Prefer back camera
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+          frameRate: { ideal: 30 },
+          facingMode: { ideal: 'environment' },
+          advanced: [
+            { width: 1920, height: 1080 },
+            { aspectRatio: 16/9 }
+          ]
         },
-        audio: true
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
       };
 
-      // Try to get media with preferred constraints
+      // Try to get high quality stream
       const stream = await navigator.mediaDevices.getUserMedia(constraints)
         .catch(async () => {
-          // Fallback to any camera if preferred fails
-          delete constraints.video.facingMode;
-          return await navigator.mediaDevices.getUserMedia(constraints);
+          // Fallback to lower quality if needed
+          return await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: true
+          });
         });
 
       localStream = stream;
@@ -107,6 +115,12 @@ document.addEventListener('DOMContentLoaded', function() {
       liveVideo.srcObject = localStream;
       liveIndicator.classList.remove('hidden');
       
+      // Set video quality
+      if (liveVideo.videoWidth) {
+        liveVideo.width = liveVideo.videoWidth;
+        liveVideo.height = liveVideo.videoHeight;
+      }
+
       // Notify server we're the broadcaster
       isBroadcaster = true;
       if (ws.readyState === WebSocket.OPEN) {
@@ -119,7 +133,7 @@ document.addEventListener('DOMContentLoaded', function() {
       streamStatus.style.borderLeft = '4px solid var(--success-color)';
       streamBtn.innerHTML = '<i class="fas fa-stop-circle"></i> Stop Streaming';
       
-      // Setup WebRTC
+      // Setup WebRTC with high quality settings
       setupWebRTC();
 
     } catch (error) {
@@ -129,26 +143,42 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   }
 
-  // Setup WebRTC peer connection
+  // Setup WebRTC with quality settings
   function setupWebRTC() {
     const configuration = {
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
         { urls: 'stun:stun2.l.google.com:19302' }
-      ]
+      ],
+      iceTransportPolicy: 'relay', // For better quality in restrictive networks
+      bundlePolicy: 'max-bundle', // For better performance
+      rtcpMuxPolicy: 'require' // For better performance
     };
 
     peerConnection = new RTCPeerConnection(configuration);
 
-    // Add local stream to connection
+    // Add local stream tracks with quality settings
     localStream.getTracks().forEach(track => {
-      peerConnection.addTrack(track, localStream);
+      if (track.kind === 'video') {
+        const sender = peerConnection.addTrack(track, localStream);
+        // Set video encoding parameters
+        const parameters = sender.getParameters();
+        if (!parameters.encodings) {
+          parameters.encodings = [{}];
+        }
+        parameters.encodings[0].maxBitrate = 2500000; // 2.5 Mbps
+        parameters.encodings[0].scaleResolutionDownBy = 1.0; // Full resolution
+        sender.setParameters(parameters);
+      } else {
+        peerConnection.addTrack(track, localStream);
+      }
     });
 
     // ICE candidate handler
     peerConnection.onicecandidate = (event) => {
       if (event.candidate && ws.readyState === WebSocket.OPEN) {
+        console.log('Sending ICE candidate to viewer');
         ws.send(JSON.stringify({
           type: 'candidate',
           candidate: event.candidate,
@@ -157,21 +187,45 @@ document.addEventListener('DOMContentLoaded', function() {
       }
     };
 
-    // Create offer for viewers
-    peerConnection.createOffer()
-      .then(offer => peerConnection.setLocalDescription(offer))
-      .then(() => {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({
-            type: 'offer',
-            offer: peerConnection.localDescription,
-            target: 'viewer'
-          }));
-        }
-      })
-      .catch(error => {
-        console.error('Error creating offer:', error);
-      });
+    // Connection state handling
+    peerConnection.onconnectionstatechange = () => {
+      console.log('Connection state:', peerConnection.connectionState);
+      switch (peerConnection.connectionState) {
+        case 'connected':
+          console.log('Successfully connected to viewer');
+          break;
+        case 'disconnected':
+        case 'failed':
+          console.log('Disconnected from viewer');
+          break;
+      }
+    };
+
+    // Create high quality offer for viewers
+    console.log('Creating offer for viewers');
+    peerConnection.createOffer({
+      offerToReceiveAudio: true,
+      offerToReceiveVideo: true
+    })
+    .then(offer => {
+      console.log('Setting local description');
+      return peerConnection.setLocalDescription(offer);
+    })
+    .then(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+        console.log('Sending offer to viewers');
+        ws.send(JSON.stringify({
+          type: 'offer',
+          offer: peerConnection.localDescription,
+          target: 'viewer'
+        }));
+      }
+    })
+    .catch(error => {
+      console.error('Error creating offer:', error);
+      alert('Error setting up stream. Please try again.');
+      stopStreaming();
+    });
   }
 
   // Stop streaming
