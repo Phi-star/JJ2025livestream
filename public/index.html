@@ -1,88 +1,86 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>JJ2025 Wedding Live Stream</title>
-    <link rel="stylesheet" href="index.css">
-    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=Montserrat:wght@300;400;600&family=Dancing+Script:wght@700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>JJ2025 Wedding Live Stream</title>
+  <link rel="stylesheet" href="index.css">
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=Montserrat:wght@300;400;600&family=Dancing+Script:wght@700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
 </head>
 <body>
-    <div class="background-overlay"></div>
-    <div class="container">
-        <header>
-            <h1 class="title">JJ2025 Wedding Celebration</h1>
-            <p class="subtitle">Joyfully Invite You To Share Their Special Day</p>
-            <div class="date-location">
-                <p><i class="fas fa-calendar-alt"></i> May 27, 2025</p>
-                <p><i class="fas fa-map-marker-alt"></i> Ibadan, Nigeria & Worldwide</p>
-            </div>
-        </header>
+  <div class="background-overlay"></div>
+  <div class="container">
+    <header>
+      <h1 class="title">JJ2025 Wedding Celebration</h1>
+      <p class="subtitle">Joyfully Invite You To Share Their Special Day</p>
+      <div class="date-location">
+        <p><i class="fas fa-calendar-alt"></i> May 27, 2025</p>
+        <p><i class="fas fa-map-marker-alt"></i> Lagos, Nigeria & Worldwide</p>
+      </div>
+    </header>
 
-        <main>
-            <div class="welcome-message">
-                <p>Dear Friends and Family,</p>
-                <p>Though miles may separate us, love knows no distance. We're thrilled you can join us virtually as we celebrate this beautiful union.</p>
-                <p>From the traditional rites to the first dance, witness every magical moment as if you were here with us.</p>
-                <p>With love,<br>joy & Jeffrey</p>
-            </div>
+    <main>
+      <div class="welcome-message">
+        <p>Dear Friends and Family,</p>
+        <p>Though miles may separate us, love knows no distance. We're thrilled you can join us virtually as we celebrate this beautiful union.</p>
+        <p>From the traditional rites to the first dance, witness every magical moment as if you were here with us.</p>
+        <p>With love,<br>Jessica & James</p>
+      </div>
 
-            <div class="stream-controls">
-                <button id="watchBtn" class="btn watch-btn">
-                    <i class="fas fa-play-circle"></i> Watch Live Stream
-                </button>
-                <button id="streamBtn" class="btn stream-btn">
-                    <i class="fas fa-broadcast-tower"></i> Start Live Stream
-                </button>
-            </div>
+      <div class="stream-controls">
+        <button id="watchBtn" class="btn watch-btn">
+          <i class="fas fa-play-circle"></i> Watch Live Stream
+        </button>
+        <button id="streamBtn" class="btn stream-btn">
+          <i class="fas fa-broadcast-tower"></i> Start Live Stream
+        </button>
+      </div>
 
-            <div id="streamStatus" class="status-message">
-                <p>Live stream is currently offline</p>
-            </div>
-        </main>
+      <div id="streamStatus" class="status-message">
+        <p>Live stream is currently offline</p>
+      </div>
+    </main>
 
-        <div id="videoContainer" class="video-container hidden">
-            <video id="liveVideo" autoplay playsinline></video>
-            <div class="video-controls">
-                <button id="fullscreenBtn" class="control-btn"><i class="fas fa-expand"></i></button>
-                <button id="exitBtn" class="control-btn"><i class="fas fa-times"></i></button>
-            </div>
-            <div id="liveIndicator" class="live-indicator hidden">
-                <span class="red-dot"></span> LIVE
-            </div>
-        </div>
-
-        <div id="permissionModal" class="modal hidden">
-            <div class="modal-content">
-                <h3>Permission Required</h3>
-                <p>To start the live stream, please allow access to your camera and microphone.</p>
-                <div class="modal-buttons">
-                    <button id="allowBtn" class="modal-btn allow">Allow</button>
-                    <button id="denyBtn" class="modal-btn deny">Deny</button>
-                </div>
-            </div>
-        </div>
-
-        <div id="streamActiveModal" class="modal hidden">
-            <div class="modal-content">
-                <h3>Live Stream Active</h3>
-                <p>Someone is already streaming the event. Enjoy watching!</p>
-                <button id="closeModalBtn" class="modal-btn allow">OK</button>
-            </div>
-        </div>
-
-        <footer>
-            <p>© 2025 JJ Wedding Celebration. All rights reserved.</p>
-            <div class="social-icons">
-                <i class="fab fa-instagram"></i>
-                <i class="fab fa-facebook"></i>
-                <i class="fab fa-twitter"></i>
-            </div>
-        </footer>
+    <div id="videoContainer" class="video-container hidden">
+      <video id="liveVideo" autoplay playsinline></video>
+      <div class="video-controls">
+        <button id="fullscreenBtn" class="control-btn"><i class="fas fa-expand"></i></button>
+        <button id="exitBtn" class="control-btn"><i class="fas fa-times"></i></button>
+      </div>
+      <div id="liveIndicator" class="live-indicator hidden">
+        <span class="red-dot"></span> LIVE
+      </div>
     </div>
 
-    <script src="viewer.js"></script>
-    <script src="index.js"></script>
+    <div id="permissionModal" class="modal hidden">
+      <div class="modal-content">
+        <h3>Permission Required</h3>
+        <p>To start the live stream, please allow access to your camera and microphone.</p>
+        <div class="modal-buttons">
+          <button id="allowBtn" class="modal-btn allow">Allow</button>
+          <button id="denyBtn" class="modal-btn deny">Deny</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="streamActiveModal" class="modal hidden">
+      <div class="modal-content">
+        <h3>Live Stream Active</h3>
+        <p>Someone is already streaming the event. Enjoy watching!</p>
+        <button id="closeModalBtn" class="modal-btn allow">OK</button>
+      </div>
+    </div>
+
+    <footer>
+      <p>© 2025 JJ Wedding Celebration. All rights reserved.</p>
+      <div class="social-icons">
+        <i class="fab fa-instagram"></i>
+        <i class="fab fa-facebook"></i>
+        <i class="fab fa-twitter"></i>
+      </div>
+    </footer>
+  </div>
+  <script src="index.js"></script>
 </body>
 </html>
