@@ -18,7 +18,10 @@ document.addEventListener('DOMContentLoaded', function() {
   function initWebSocket() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
-    ws = new WebSocket(`${protocol}//${host}`);
+    const wsUrl = `${protocol}//${host}/api/ws`;
+
+    console.log('Connecting to WebSocket:', wsUrl);
+    ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
       console.log('Connected to signaling server');
@@ -32,7 +35,7 @@ document.addEventListener('DOMContentLoaded', function() {
         
         if (data.type === 'streamStatus') {
           if (data.isLive) {
-            streamStatus.innerHTML = '<p>Live stream is currently active!</p>';
+            streamStatus.innerHTML = '<p>Live stream found! Connecting...</p>';
             streamStatus.style.backgroundColor = 'rgba(46, 204, 113, 0.2)';
             streamStatus.style.borderLeft = '4px solid var(--success-color)';
           } else {
@@ -63,44 +66,86 @@ document.addEventListener('DOMContentLoaded', function() {
 
     ws.onerror = (error) => {
       console.error('WebSocket error:', error);
+      streamStatus.innerHTML = '<p>Connection error. Trying to reconnect...</p>';
     };
 
     ws.onclose = () => {
       console.log('WebSocket disconnected');
       if (reconnectAttempts < maxReconnectAttempts) {
         const delay = Math.min(reconnectDelay * (reconnectAttempts + 1), 5000);
-        console.log(`Reconnecting in ${delay}ms...`);
         setTimeout(initWebSocket, delay);
         reconnectAttempts++;
       } else {
-        alert('Connection lost. Please refresh the page.');
+        streamStatus.innerHTML = '<p>Failed to connect to server. Please refresh.</p>';
       }
     };
   }
 
   // Handle WebRTC offer from broadcaster
   async function handleOffer(data) {
-    const configuration = {
-      iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' }
-      ]
-    };
-
+    console.log('Received offer, setting up WebRTC');
     try {
       if (peerConnection) {
         peerConnection.close();
       }
 
+      const configuration = {
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+          { urls: 'stun:stun2.l.google.com:19302' }
+        ]
+      };
+
       peerConnection = new RTCPeerConnection(configuration);
 
-      // When we receive a track, add it to the video element
+      // Configure for high quality video
+      peerConnection.addTransceiver('video', {
+        direction: 'recvonly',
+        streams: [1] // High priority
+      });
+
+      peerConnection.addTransceiver('audio', {
+        direction: 'recvonly'
+      });
+
+      // When we receive a track
       peerConnection.ontrack = (event) => {
+        console.log('Received track:', event.track.kind);
         if (event.streams && event.streams[0]) {
           liveVideo.srcObject = event.streams[0];
+          
+          // Auto-show in fullscreen when stream starts
           videoContainer.classList.remove('hidden');
           liveIndicator.classList.remove('hidden');
+          
+          // Request fullscreen
+          if (videoContainer.requestFullscreen) {
+            videoContainer.requestFullscreen().catch(e => {
+              console.log('Fullscreen error:', e);
+            });
+          }
+          
+          // Auto-play with high quality
+          liveVideo.play()
+            .then(() => {
+              console.log('Video playback started');
+              // Set video quality preferences
+              if (liveVideo.videoWidth) {
+                liveVideo.width = liveVideo.videoWidth;
+                liveVideo.height = liveVideo.videoHeight;
+              }
+              
+              // Prioritize high quality
+              if (typeof liveVideo.setAttribute === 'function') {
+                liveVideo.setAttribute('playsinline', 'false');
+                liveVideo.setAttribute('preload', 'auto');
+              }
+            })
+            .catch(error => {
+              console.error('Video play error:', error);
+              alert('Please allow video autoplay to view the stream');
+            });
         }
       };
 
@@ -115,7 +160,21 @@ document.addEventListener('DOMContentLoaded', function() {
         }
       };
 
-      await peerConnection.setRemoteDescription(new RTCSessionDescription(data));
+      // Connection state handling
+      peerConnection.onconnectionstatechange = () => {
+        console.log('Connection state:', peerConnection.connectionState);
+        switch (peerConnection.connectionState) {
+          case 'connected':
+            streamStatus.innerHTML = '<p>Successfully connected!</p>';
+            break;
+          case 'disconnected':
+          case 'failed':
+            streamStatus.innerHTML = '<p>Disconnected from stream</p>';
+            break;
+        }
+      };
+
+      await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
       const answer = await peerConnection.createAnswer();
       await peerConnection.setLocalDescription(answer);
 
@@ -128,6 +187,7 @@ document.addEventListener('DOMContentLoaded', function() {
       }
     } catch (error) {
       console.error('Error handling offer:', error);
+      streamStatus.innerHTML = '<p>Error connecting to stream. Please refresh.</p>';
       if (peerConnection) {
         peerConnection.close();
         peerConnection = null;
@@ -136,20 +196,23 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   // Event listeners
-  fullscreenBtn.addEventListener('click', function() {
+  fullscreenBtn.addEventListener('click', () => {
     if (!document.fullscreenElement) {
-      videoContainer.requestFullscreen().catch(err => {
-        console.error('Error attempting to enable fullscreen:', err);
+      videoContainer.requestFullscreen().catch(e => {
+        console.log('Fullscreen error:', e);
       });
     } else {
       document.exitFullscreen();
     }
   });
 
-  exitBtn.addEventListener('click', function() {
+  exitBtn.addEventListener('click', () => {
     if (peerConnection) {
       peerConnection.close();
       peerConnection = null;
+    }
+    if (document.fullscreenElement) {
+      document.exitFullscreen();
     }
     videoContainer.classList.add('hidden');
     liveIndicator.classList.add('hidden');
