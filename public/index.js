@@ -19,6 +19,8 @@ document.addEventListener('DOMContentLoaded', function() {
     let peerConnection;
     let localStream;
     let isBroadcaster = false;
+    let reconnectAttempts = 0;
+    const maxReconnectAttempts = 5;
 
     // Initialize WebSocket connection
     function initWebSocket() {
@@ -28,32 +30,49 @@ document.addEventListener('DOMContentLoaded', function() {
 
         ws.onopen = () => {
             console.log('Connected to signaling server');
-        };
-
-        ws.onmessage = async (message) => {
-            const data = JSON.parse(message.data);
-            
-            if (data.type === 'offer') {
-                if (isBroadcaster) return;
-                
-                // This would be for viewer mode (not used in broadcaster)
-            } else if (data.type === 'answer') {
-                // Handle answer from viewer
-                await peerConnection.setRemoteDescription(new RTCSessionDescription(data));
-            } else if (data.type === 'candidate') {
-                // Add ICE candidate
-                try {
-                    await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
-                } catch (e) {
-                    console.error('Error adding ICE candidate:', e);
-                }
+            reconnectAttempts = 0;
+            if (isBroadcaster) {
+                ws.send(JSON.stringify({ type: 'broadcaster' }));
             }
         };
 
+        ws.onmessage = async (message) => {
+            try {
+                const data = JSON.parse(message.data);
+                
+                if (data.type === 'error' && data.message === 'Broadcaster already exists') {
+                    alert('Someone is already broadcasting. Only one broadcaster is allowed.');
+                    stopStreaming();
+                    return;
+                }
+
+                if (data.type === 'answer') {
+                    await peerConnection.setRemoteDescription(new RTCSessionDescription(data));
+                } else if (data.type === 'candidate') {
+                    try {
+                        await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+                    } catch (e) {
+                        console.error('Error adding ICE candidate:', e);
+                    }
+                }
+            } catch (error) {
+                console.error('Error handling message:', error);
+            }
+        };
+
+        ws.onerror = (error) => {
+            console.error('WebSocket error:', error);
+        };
+
         ws.onclose = () => {
-            console.log('Disconnected from signaling server');
-            if (isBroadcaster) {
-                stopStreaming();
+            console.log('WebSocket disconnected');
+            if (reconnectAttempts < maxReconnectAttempts) {
+                const delay = Math.min(1000 * (reconnectAttempts + 1), 5000);
+                console.log(`Reconnecting in ${delay}ms...`);
+                setTimeout(initWebSocket, delay);
+                reconnectAttempts++;
+            } else {
+                alert('Connection lost. Please refresh the page.');
             }
         };
     }
@@ -61,32 +80,29 @@ document.addEventListener('DOMContentLoaded', function() {
     // Start streaming as broadcaster
     async function startStreaming() {
         try {
-            // Get user media (both front and back camera if available)
+            // Get available cameras
             const devices = await navigator.mediaDevices.enumerateDevices();
             const videoDevices = devices.filter(device => device.kind === 'videoinput');
             
-            let stream;
-            
+            let constraints = {
+                video: {
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 }
+                },
+                audio: true
+            };
+
+            // Try to get back camera if available
             if (videoDevices.length > 1) {
-                // Try to get back camera
-                stream = await navigator.mediaDevices.getUserMedia({
-                    video: {
-                        facingMode: { exact: 'environment' },
-                        width: { ideal: 1280 },
-                        height: { ideal: 720 }
-                    },
-                    audio: true
-                });
-            } else {
-                // Fallback to any camera
-                stream = await navigator.mediaDevices.getUserMedia({
-                    video: {
-                        width: { ideal: 1280 },
-                        height: { ideal: 720 }
-                    },
-                    audio: true
-                });
+                constraints.video.facingMode = { exact: 'environment' };
             }
+
+            const stream = await navigator.mediaDevices.getUserMedia(constraints)
+                .catch(async () => {
+                    // Fallback to any camera if back camera fails
+                    delete constraints.video.facingMode;
+                    return await navigator.mediaDevices.getUserMedia(constraints);
+                });
 
             localStream = stream;
             videoContainer.classList.remove('hidden');
@@ -95,7 +111,9 @@ document.addEventListener('DOMContentLoaded', function() {
             
             // Notify server we're the broadcaster
             isBroadcaster = true;
-            ws.send(JSON.stringify({ type: 'broadcaster' }));
+            if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'broadcaster' }));
+            }
             
             // Update UI
             streamStatus.innerHTML = '<p>You are currently streaming live!</p>';
@@ -109,6 +127,7 @@ document.addEventListener('DOMContentLoaded', function() {
         } catch (error) {
             console.error('Error accessing media devices:', error);
             alert('Could not access camera or microphone. Please check your permissions.');
+            stopStreaming();
         }
     }
 
@@ -119,7 +138,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 { urls: 'stun:stun.l.google.com:19302' },
                 { urls: 'stun:stun1.l.google.com:19302' },
                 { urls: 'stun:stun2.l.google.com:19302' }
-                // Add your TURN servers here if needed
             ]
         };
 
@@ -132,7 +150,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         // ICE candidate handler
         peerConnection.onicecandidate = (event) => {
-            if (event.candidate) {
+            if (event.candidate && ws.readyState === WebSocket.OPEN) {
                 ws.send(JSON.stringify({
                     type: 'candidate',
                     candidate: event.candidate,
@@ -145,11 +163,13 @@ document.addEventListener('DOMContentLoaded', function() {
         peerConnection.createOffer()
             .then(offer => peerConnection.setLocalDescription(offer))
             .then(() => {
-                ws.send(JSON.stringify({
-                    type: 'offer',
-                    offer: peerConnection.localDescription,
-                    target: 'viewer'
-                }));
+                if (ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({
+                        type: 'offer',
+                        offer: peerConnection.localDescription,
+                        target: 'viewer'
+                    }));
+                }
             })
             .catch(error => {
                 console.error('Error creating offer:', error);
@@ -168,7 +188,7 @@ document.addEventListener('DOMContentLoaded', function() {
             peerConnection = null;
         }
         
-        if (isBroadcaster) {
+        if (isBroadcaster && ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'disconnect' }));
             isBroadcaster = false;
         }
@@ -189,7 +209,6 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
 
-        // Check if someone is already streaming
         if (ws && ws.readyState === WebSocket.OPEN) {
             permissionModal.classList.remove('hidden');
         } else {
@@ -198,7 +217,7 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     watchBtn.addEventListener('click', function() {
-        window.location.href = '/viewer.html';
+        window.location.href = '/viewer';
     });
 
     allowBtn.addEventListener('click', function() {
