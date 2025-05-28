@@ -3,32 +3,50 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>JJ2025 Wedding Live Stream - Viewer</title>
-    <link rel="stylesheet" href="index.css">
-    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=Montserrat:wght@300;400;600&family=Dancing+Script:wght@700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <title>JJ2025 Wedding Live Stream</title>
+    <link rel="stylesheet" href="viewer.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
     <div class="viewer-container">
-        <div class="viewer-status" id="streamStatus">
-            <i class="fas fa-circle-notch fa-spin"></i> Connecting to live stream...
-        </div>
-        
-        <video id="liveVideo" autoplay playsinline></video>
-        
-        <div class="viewer-controls">
-            <button id="fullscreenBtn" class="viewer-control-btn" title="Fullscreen">
-                <i class="fas fa-expand"></i>
-            </button>
-            <button id="muteBtn" class="viewer-control-btn" title="Mute">
-                <i class="fas fa-volume-up"></i>
-            </button>
-            <button id="refreshBtn" class="viewer-control-btn" title="Refresh">
-                <i class="fas fa-sync-alt"></i>
-            </button>
+        <div class="video-container">
+            <video id="liveVideo" autoplay playsinline muted></video>
+            
+            <div class="status-bar">
+                <div class="status-indicator">
+                    <div class="live-badge"></div>
+                    <span id="statusText">Connecting...</span>
+                </div>
+                <div class="viewer-count">
+                    <i class="fas fa-users"></i> <span id="viewerCount">0</span> watching
+                </div>
+            </div>
+            
+            <div class="controls-overlay">
+                <button id="fullscreenBtn" class="control-btn" title="Fullscreen">
+                    <i class="fas fa-expand"></i>
+                </button>
+                <button id="muteBtn" class="control-btn" title="Unmute">
+                    <i class="fas fa-volume-mute"></i>
+                </button>
+                <button id="refreshBtn" class="control-btn" title="Refresh">
+                    <i class="fas fa-sync-alt"></i>
+                </button>
+            </div>
+            
+            <div class="loading-overlay" id="loadingOverlay">
+                <div class="spinner"></div>
+                <div id="loadingText">Connecting to live stream...</div>
+            </div>
+            
+            <div class="error-message" id="errorOverlay" style="display: none;">
+                <h3 id="errorTitle">Connection Error</h3>
+                <p id="errorDetails">Failed to connect to the live stream.</p>
+                <button id="retryBtn" class="retry-btn">Retry</button>
+            </div>
         </div>
     </div>
-    
+
     <script src="viewer.js"></script>
 </body>
 </html>
