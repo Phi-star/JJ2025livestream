@@ -1,65 +1,42 @@
 document.addEventListener('DOMContentLoaded', function() {
     // DOM Elements
     const liveVideo = document.getElementById('liveVideo');
+    const streamStatus = document.getElementById('streamStatus');
     const fullscreenBtn = document.getElementById('fullscreenBtn');
     const muteBtn = document.getElementById('muteBtn');
-    const refreshBtn = document.getElementById('refreshBtn');
-    const streamStatus = document.getElementById('streamStatus');
 
-    // WebSocket and WebRTC variables
-    let ws;
+    // WebRTC Variables
     let peerConnection;
-    let reconnectAttempts = 0;
-    const maxReconnectAttempts = 5;
+    let ws;
     let isMuted = false;
-    let isFullscreen = false;
 
-    // Initialize WebSocket connection
+    // Initialize WebSocket Connection
     function initWebSocket() {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const host = window.location.host;
-        const wsUrl = `${protocol}//${host}/api/ws`;
+        const wsUrl = `${protocol}//${window.location.host}/api/ws`;
 
-        console.log('Connecting to WebSocket:', wsUrl);
-        updateStatus('Connecting to server...', 'info');
-        
         ws = new WebSocket(wsUrl);
 
         ws.onopen = () => {
             console.log('Connected to signaling server');
-            reconnectAttempts = 0;
-            updateStatus('Connected, waiting for stream...', 'success');
+            updateStatus('Connected - Waiting for stream...', 'info');
             ws.send(JSON.stringify({ type: 'viewer' }));
         };
 
         ws.onmessage = async (message) => {
-            try {
-                const data = JSON.parse(message.data);
-                
-                if (data.type === 'streamStatus') {
-                    if (data.isLive) {
-                        updateStatus('Live stream available! Connecting...', 'success');
-                    } else {
-                        updateStatus('No active live stream', 'warning');
-                        if (peerConnection) {
-                            peerConnection.close();
-                            peerConnection = null;
-                        }
-                    }
-                } else if (data.type === 'offer') {
-                    await handleOffer(data);
-                } else if (data.type === 'candidate') {
-                    if (peerConnection) {
-                        try {
-                            await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
-                        } catch (e) {
-                            console.error('Error adding ICE candidate:', e);
-                        }
-                    }
+            const data = JSON.parse(message.data);
+            
+            if (data.type === 'offer') {
+                await handleOffer(data);
+            } 
+            else if (data.type === 'candidate') {
+                if (peerConnection && data.candidate) {
+                    await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
                 }
-            } catch (error) {
-                console.error('Error handling message:', error);
-                updateStatus('Error processing stream data', 'error');
+            }
+            else if (data.type === 'streamStatus') {
+                updateStatus(data.isLive ? 'Live stream available!' : 'No active stream', 
+                             data.isLive ? 'success' : 'warning');
             }
         };
 
@@ -70,59 +47,45 @@ document.addEventListener('DOMContentLoaded', function() {
 
         ws.onclose = () => {
             console.log('WebSocket disconnected');
-            if (reconnectAttempts < maxReconnectAttempts) {
-                const delay = Math.min(1000 * (reconnectAttempts + 1), 5000);
-                updateStatus(`Connection lost. Reconnecting in ${delay/1000} seconds...`, 'warning');
-                setTimeout(initWebSocket, delay);
-                reconnectAttempts++;
-            } else {
-                updateStatus('Failed to connect. Please refresh the page.', 'error');
-            }
+            updateStatus('Disconnected - Retrying...', 'warning');
+            setTimeout(initWebSocket, 3000);
         };
     }
 
-    // Handle WebRTC offer from broadcaster
-    async function handleOffer(data) {
+    // Handle the WebRTC Offer
+    async function handleOffer(offerData) {
         try {
-            updateStatus('Connecting to live stream...', 'info');
+            updateStatus('Connecting to stream...', 'info');
             
-            if (peerConnection) {
-                peerConnection.close();
-            }
-
-            const configuration = {
+            // Create PeerConnection
+            peerConnection = new RTCPeerConnection({
                 iceServers: [
                     { urls: 'stun:stun.l.google.com:19302' },
-                    { urls: 'stun:stun1.l.google.com:19302' },
-                    { urls: 'stun:stun2.l.google.com:19302' }
+                    { urls: 'stun:stun1.l.google.com:19302' }
                 ]
-            };
+            });
 
-            peerConnection = new RTCPeerConnection(configuration);
-
-            // When we receive a track
+            // When stream arrives
             peerConnection.ontrack = (event) => {
-                console.log('Received track:', event.track.kind);
+                console.log('Received stream tracks');
                 if (event.streams && event.streams[0]) {
                     liveVideo.srcObject = event.streams[0];
-                    
-                    // Auto-play the video
                     liveVideo.play()
                         .then(() => {
-                            updateStatus('Live stream connected!', 'success');
-                            // Auto-enter fullscreen if not on mobile
+                            updateStatus('Watching live!', 'success');
+                            // Auto fullscreen on desktop
                             if (!/Mobi|Android/i.test(navigator.userAgent)) {
-                                enterFullscreen();
+                                document.documentElement.requestFullscreen();
                             }
                         })
-                        .catch(error => {
-                            console.error('Video play error:', error);
-                            updateStatus('Please allow video playback', 'error');
+                        .catch(err => {
+                            console.error('Playback error:', err);
+                            updateStatus('Click to allow video playback', 'error');
                         });
                 }
             };
 
-            // ICE candidate handler
+            // ICE Candidate handling
             peerConnection.onicecandidate = (event) => {
                 if (event.candidate && ws.readyState === WebSocket.OPEN) {
                     ws.send(JSON.stringify({
@@ -133,90 +96,37 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             };
 
-            // Connection state handling
-            peerConnection.onconnectionstatechange = () => {
-                console.log('Connection state:', peerConnection.connectionState);
-                switch (peerConnection.connectionState) {
-                    case 'connected':
-                        updateStatus('Live stream connected!', 'success');
-                        break;
-                    case 'disconnected':
-                    case 'failed':
-                        updateStatus('Disconnected from stream', 'error');
-                        break;
-                }
-            };
-
-            await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
+            // Set remote description and create answer
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(offerData.offer));
             const answer = await peerConnection.createAnswer();
             await peerConnection.setLocalDescription(answer);
+            
+            // Send answer to broadcaster
+            ws.send(JSON.stringify({
+                type: 'answer',
+                answer: answer,
+                target: 'broadcaster'
+            }));
 
-            if (ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({
-                    type: 'answer',
-                    answer: answer,
-                    target: 'broadcaster'
-                }));
-            }
         } catch (error) {
-            console.error('Error handling offer:', error);
-            updateStatus('Error connecting to stream', 'error');
-            if (peerConnection) {
-                peerConnection.close();
-                peerConnection = null;
-            }
+            console.error('Offer handling error:', error);
+            updateStatus('Failed to connect to stream', 'error');
+            if (peerConnection) peerConnection.close();
         }
     }
 
-    // Update status message
+    // UI Functions
     function updateStatus(message, type) {
-        let icon = '';
-        switch(type) {
-            case 'success':
-                icon = '<i class="fas fa-check-circle"></i> ';
-                break;
-            case 'error':
-                icon = '<i class="fas fa-exclamation-circle"></i> ';
-                break;
-            case 'warning':
-                icon = '<i class="fas fa-exclamation-triangle"></i> ';
-                break;
-            default:
-                icon = '<i class="fas fa-info-circle"></i> ';
-        }
-        
-        streamStatus.innerHTML = icon + message;
-        streamStatus.style.color = 
-            type === 'success' ? '#2ecc71' :
-            type === 'error' ? '#e74c3c' :
-            type === 'warning' ? '#f39c12' : '#3498db';
+        const colors = {
+            info: '#3498db',
+            success: '#2ecc71',
+            warning: '#f39c12',
+            error: '#e74c3c'
+        };
+        streamStatus.textContent = message;
+        streamStatus.style.color = colors[type] || '#3498db';
     }
 
-    // Fullscreen handling
-    function enterFullscreen() {
-        if (!document.fullscreenElement) {
-            document.documentElement.requestFullscreen()
-                .then(() => {
-                    isFullscreen = true;
-                    fullscreenBtn.innerHTML = '<i class="fas fa-compress"></i>';
-                })
-                .catch(err => {
-                    console.log('Fullscreen error:', err);
-                });
-        }
-    }
-
-    function exitFullscreen() {
-        if (document.fullscreenElement) {
-            document.exitFullscreen()
-                .then(() => {
-                    isFullscreen = false;
-                    fullscreenBtn.innerHTML = '<i class="fas fa-expand"></i>';
-                });
-        }
-    }
-
-    // Toggle mute
     function toggleMute() {
         if (liveVideo.srcObject) {
             isMuted = !isMuted;
@@ -227,27 +137,14 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
-    // Event listeners
-    fullscreenBtn.addEventListener('click', function() {
-        if (!isFullscreen) {
-            enterFullscreen();
-        } else {
-            exitFullscreen();
-        }
-    });
-
+    // Event Listeners
     muteBtn.addEventListener('click', toggleMute);
-
-    refreshBtn.addEventListener('click', function() {
-        window.location.reload();
-    });
-
-    // Handle fullscreen change events
-    document.addEventListener('fullscreenchange', function() {
-        isFullscreen = !!document.fullscreenElement;
-        fullscreenBtn.innerHTML = isFullscreen ? 
-            '<i class="fas fa-compress"></i>' : 
-            '<i class="fas fa-expand"></i>';
+    fullscreenBtn.addEventListener('click', () => {
+        if (!document.fullscreenElement) {
+            document.documentElement.requestFullscreen();
+        } else {
+            document.exitFullscreen();
+        }
     });
 
     // Initialize
