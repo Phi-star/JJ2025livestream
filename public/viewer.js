@@ -1,6 +1,17 @@
 document.addEventListener('DOMContentLoaded', function() {
-    // DOM Elements
+    // 1. First ensure video element exists
     const liveVideo = document.getElementById('liveVideo');
+    if (!liveVideo) {
+        console.error('ERROR: Missing video element with id="liveVideo"');
+        alert('Missing video element - please add <video id="liveVideo"> to your HTML');
+        return;
+    }
+
+    // Set muted initially to bypass autoplay restrictions
+    liveVideo.muted = true;
+    liveVideo.setAttribute('playsinline', '');
+    liveVideo.setAttribute('controls', '');
+
     const streamStatus = document.getElementById('streamStatus');
     const fullscreenBtn = document.getElementById('fullscreenBtn');
     const muteBtn = document.getElementById('muteBtn');
@@ -8,9 +19,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // WebRTC Variables
     let peerConnection;
     let ws;
-    let isMuted = false;
-    let retryCount = 0;
-    const maxRetries = 3;
+    let isMuted = true; // Start muted to ensure autoplay works
 
     // Initialize WebSocket Connection
     function initWebSocket() {
@@ -22,32 +31,29 @@ document.addEventListener('DOMContentLoaded', function() {
 
         ws.onopen = () => {
             console.log('Connected to signaling server');
-            updateStatus('Connected to server', 'info');
+            updateStatus('Connected - Waiting for stream...', 'info');
             ws.send(JSON.stringify({ type: 'viewer' }));
         };
 
         ws.onmessage = async (message) => {
             try {
                 const data = JSON.parse(message.data);
-                console.log('Received message:', data.type);
+                console.log('WebSocket message:', data.type);
                 
                 if (data.type === 'offer') {
                     console.log('Received offer, setting up WebRTC');
                     await handleOffer(data);
                 } 
                 else if (data.type === 'candidate') {
-                    console.log('Received ICE candidate');
+                    console.log('Received ICE candidate:', data.candidate);
                     if (peerConnection && data.candidate) {
                         try {
-                            await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+                            await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate))
+                                .catch(e => console.warn('ICE candidate add failed:', e));
                         } catch (e) {
                             console.warn('Failed to add ICE candidate:', e);
                         }
                     }
-                }
-                else if (data.type === 'streamStatus') {
-                    updateStatus(data.isLive ? 'Live stream available' : 'No active stream', 
-                                data.isLive ? 'success' : 'warning');
                 }
             } catch (error) {
                 console.error('Error handling message:', error);
@@ -61,15 +67,8 @@ document.addEventListener('DOMContentLoaded', function() {
         };
 
         ws.onclose = () => {
-            console.log('WebSocket disconnected');
-            if (retryCount < maxRetries) {
-                retryCount++;
-                const delay = Math.min(retryCount * 2000, 5000);
-                updateStatus(`Reconnecting in ${delay/1000}s...`, 'warning');
-                setTimeout(initWebSocket, delay);
-            } else {
-                updateStatus('Failed to connect. Please refresh.', 'error');
-            }
+            console.log('WebSocket disconnected - reconnecting...');
+            setTimeout(initWebSocket, 3000);
         };
     }
 
@@ -83,45 +82,19 @@ document.addEventListener('DOMContentLoaded', function() {
                 peerConnection.close();
             }
 
-            // Create new PeerConnection
+            // Create new PeerConnection with debugging
             peerConnection = new RTCPeerConnection({
                 iceServers: [
                     { urls: 'stun:stun.l.google.com:19302' },
-                    { urls: 'stun:stun1.l.google.com:19302' }
+                    { urls: 'stun:stun1.l.google.com:19302' },
+                    { urls: 'stun:stun2.l.google.com:19302' }
                 ],
-                iceTransportPolicy: 'all',
-                bundlePolicy: 'max-bundle'
+                iceTransportPolicy: 'all'
             });
 
-            // When we receive the stream
-            peerConnection.ontrack = (event) => {
-                console.log('Received media stream:', event.streams);
-                if (event.streams && event.streams[0]) {
-                    liveVideo.srcObject = event.streams[0];
-                    
-                    // Try to play the video
-                    const playPromise = liveVideo.play();
-                    
-                    if (playPromise !== undefined) {
-                        playPromise.then(() => {
-                            console.log('Video playback started');
-                            updateStatus('Live stream connected!', 'success');
-                            
-                            // Auto fullscreen on desktop
-                            if (!/Mobi|Android/i.test(navigator.userAgent)) {
-                                document.documentElement.requestFullscreen()
-                                    .catch(e => console.log('Fullscreen error:', e));
-                            }
-                        }).catch(error => {
-                            console.error('Playback failed:', error);
-                            updateStatus('Click to allow video playback', 'warning');
-                        });
-                    }
-                }
-            };
-
-            // ICE Candidate handling
+            // Debugging ICE candidates
             peerConnection.onicecandidate = (event) => {
+                console.log('ICE candidate:', event.candidate);
                 if (event.candidate && ws.readyState === WebSocket.OPEN) {
                     ws.send(JSON.stringify({
                         type: 'candidate',
@@ -131,12 +104,34 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             };
 
-            // Connection state changes
+            // When we receive the stream - MOST IMPORTANT PART!
+            peerConnection.ontrack = (event) => {
+                console.log('TRACK EVENT RECEIVED:', event);
+                console.log('Streams:', event.streams);
+                console.log('Track:', event.track);
+                
+                if (event.streams && event.streams.length > 0) {
+                    console.log('Attaching stream to video element');
+                    liveVideo.srcObject = event.streams[0];
+                    
+                    liveVideo.play()
+                        .then(() => {
+                            console.log('Video playback started');
+                            updateStatus('Live!', 'success');
+                        })
+                        .catch(error => {
+                            console.error('Playback failed:', error);
+                            updateStatus('Click to play', 'warning');
+                        });
+                }
+            };
+
+            // Debugging connection state
             peerConnection.onconnectionstatechange = () => {
                 console.log('Connection state:', peerConnection.connectionState);
                 switch (peerConnection.connectionState) {
                     case 'connected':
-                        updateStatus('Watching live!', 'success');
+                        updateStatus('Live!', 'success');
                         break;
                     case 'disconnected':
                     case 'failed':
@@ -146,18 +141,22 @@ document.addEventListener('DOMContentLoaded', function() {
             };
 
             // Set remote description
-            await peerConnection.setRemoteDescription(new RTCSessionDescription(offerData.offer));
+            console.log('Setting remote description');
+            await peerConnection.setRemoteDescription(offerData.offer);
             
             // Create answer
+            console.log('Creating answer');
             const answer = await peerConnection.createAnswer({
                 offerToReceiveAudio: true,
                 offerToReceiveVideo: true
             });
             
             // Set local description
+            console.log('Setting local description');
             await peerConnection.setLocalDescription(answer);
             
             // Send answer to broadcaster
+            console.log('Sending answer');
             ws.send(JSON.stringify({
                 type: 'answer',
                 answer: answer,
@@ -199,8 +198,7 @@ document.addEventListener('DOMContentLoaded', function() {
     
     fullscreenBtn.addEventListener('click', () => {
         if (!document.fullscreenElement) {
-            document.documentElement.requestFullscreen()
-                .catch(e => console.log('Fullscreen error:', e));
+            document.documentElement.requestFullscreen();
         } else {
             document.exitFullscreen();
         }
@@ -210,11 +208,12 @@ document.addEventListener('DOMContentLoaded', function() {
     document.addEventListener('click', () => {
         if (liveVideo.srcObject && liveVideo.paused) {
             liveVideo.play()
-                .then(() => updateStatus('Watching live!', 'success'))
+                .then(() => updateStatus('Live!', 'success'))
                 .catch(e => console.log('Play error:', e));
         }
     });
 
     // Initialize
+    console.log('Initializing WebSocket connection...');
     initWebSocket();
 });
