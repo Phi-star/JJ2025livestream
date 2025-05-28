@@ -24,19 +24,26 @@ document.addEventListener('DOMContentLoaded', function() {
         };
 
         ws.onmessage = async (message) => {
-            const data = JSON.parse(message.data);
-            
-            if (data.type === 'offer') {
-                await handleOffer(data);
-            } 
-            else if (data.type === 'candidate') {
-                if (peerConnection && data.candidate) {
-                    await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+            try {
+                const data = JSON.parse(message.data);
+                
+                if (data.type === 'offer') {
+                    console.log('Received offer from broadcaster');
+                    await handleOffer(data);
+                } 
+                else if (data.type === 'candidate') {
+                    console.log('Received ICE candidate');
+                    if (peerConnection && data.candidate) {
+                        await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+                    }
                 }
-            }
-            else if (data.type === 'streamStatus') {
-                updateStatus(data.isLive ? 'Live stream available!' : 'No active stream', 
-                             data.isLive ? 'success' : 'warning');
+                else if (data.type === 'streamStatus') {
+                    updateStatus(data.isLive ? 'Live stream available!' : 'No active stream', 
+                                data.isLive ? 'success' : 'warning');
+                }
+            } catch (error) {
+                console.error('Error handling message:', error);
+                updateStatus('Error processing stream data', 'error');
             }
         };
 
@@ -57,31 +64,40 @@ document.addEventListener('DOMContentLoaded', function() {
         try {
             updateStatus('Connecting to stream...', 'info');
             
-            // Create PeerConnection
+            // Create PeerConnection with proper configuration
             peerConnection = new RTCPeerConnection({
                 iceServers: [
                     { urls: 'stun:stun.l.google.com:19302' },
                     { urls: 'stun:stun1.l.google.com:19302' }
-                ]
+                ],
+                iceTransportPolicy: 'all',
+                bundlePolicy: 'max-bundle',
+                rtcpMuxPolicy: 'require'
             });
 
             // When stream arrives
             peerConnection.ontrack = (event) => {
-                console.log('Received stream tracks');
+                console.log('Received stream tracks:', event.streams);
                 if (event.streams && event.streams[0]) {
+                    // Set the video source
                     liveVideo.srcObject = event.streams[0];
-                    liveVideo.play()
-                        .then(() => {
+                    
+                    // Attempt to play the video
+                    const playPromise = liveVideo.play();
+                    
+                    if (playPromise !== undefined) {
+                        playPromise.then(() => {
                             updateStatus('Watching live!', 'success');
                             // Auto fullscreen on desktop
                             if (!/Mobi|Android/i.test(navigator.userAgent)) {
-                                document.documentElement.requestFullscreen();
+                                document.documentElement.requestFullscreen()
+                                    .catch(e => console.log('Fullscreen error:', e));
                             }
-                        })
-                        .catch(err => {
-                            console.error('Playback error:', err);
+                        }).catch(error => {
+                            console.error('Playback failed:', error);
                             updateStatus('Click to allow video playback', 'error');
                         });
+                    }
                 }
             };
 
@@ -96,8 +112,24 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             };
 
-            // Set remote description and create answer
+            // Connection state changes
+            peerConnection.onconnectionstatechange = () => {
+                console.log('Connection state:', peerConnection.connectionState);
+                switch (peerConnection.connectionState) {
+                    case 'connected':
+                        updateStatus('Live stream connected!', 'success');
+                        break;
+                    case 'disconnected':
+                    case 'failed':
+                        updateStatus('Stream disconnected', 'error');
+                        break;
+                }
+            };
+
+            // Set remote description
             await peerConnection.setRemoteDescription(new RTCSessionDescription(offerData.offer));
+            
+            // Create and set local description
             const answer = await peerConnection.createAnswer();
             await peerConnection.setLocalDescription(answer);
             
@@ -115,7 +147,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
-    // UI Functions
+    // Update status message
     function updateStatus(message, type) {
         const colors = {
             info: '#3498db',
@@ -127,6 +159,7 @@ document.addEventListener('DOMContentLoaded', function() {
         streamStatus.style.color = colors[type] || '#3498db';
     }
 
+    // Toggle mute
     function toggleMute() {
         if (liveVideo.srcObject) {
             isMuted = !isMuted;
@@ -139,11 +172,22 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Event Listeners
     muteBtn.addEventListener('click', toggleMute);
+    
     fullscreenBtn.addEventListener('click', () => {
         if (!document.fullscreenElement) {
-            document.documentElement.requestFullscreen();
+            document.documentElement.requestFullscreen()
+                .catch(e => console.log('Fullscreen error:', e));
         } else {
             document.exitFullscreen();
+        }
+    });
+
+    // Click to play if blocked by browser
+    document.addEventListener('click', () => {
+        if (liveVideo.srcObject && liveVideo.paused) {
+            liveVideo.play()
+                .then(() => updateStatus('Watching live!', 'success'))
+                .catch(e => console.log('Play error:', e));
         }
     });
 
