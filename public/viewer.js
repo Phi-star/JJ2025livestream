@@ -9,41 +9,49 @@ document.addEventListener('DOMContentLoaded', function() {
     let peerConnection;
     let ws;
     let isMuted = false;
+    let retryCount = 0;
+    const maxRetries = 3;
 
     // Initialize WebSocket Connection
     function initWebSocket() {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const wsUrl = `${protocol}//${window.location.host}/api/ws`;
 
+        console.log('Connecting to WebSocket:', wsUrl);
         ws = new WebSocket(wsUrl);
 
         ws.onopen = () => {
             console.log('Connected to signaling server');
-            updateStatus('Connected - Waiting for stream...', 'info');
+            updateStatus('Connected to server', 'info');
             ws.send(JSON.stringify({ type: 'viewer' }));
         };
 
         ws.onmessage = async (message) => {
             try {
                 const data = JSON.parse(message.data);
+                console.log('Received message:', data.type);
                 
                 if (data.type === 'offer') {
-                    console.log('Received offer from broadcaster');
+                    console.log('Received offer, setting up WebRTC');
                     await handleOffer(data);
                 } 
                 else if (data.type === 'candidate') {
                     console.log('Received ICE candidate');
                     if (peerConnection && data.candidate) {
-                        await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+                        try {
+                            await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+                        } catch (e) {
+                            console.warn('Failed to add ICE candidate:', e);
+                        }
                     }
                 }
                 else if (data.type === 'streamStatus') {
-                    updateStatus(data.isLive ? 'Live stream available!' : 'No active stream', 
+                    updateStatus(data.isLive ? 'Live stream available' : 'No active stream', 
                                 data.isLive ? 'success' : 'warning');
                 }
             } catch (error) {
                 console.error('Error handling message:', error);
-                updateStatus('Error processing stream data', 'error');
+                updateStatus('Error processing stream', 'error');
             }
         };
 
@@ -54,40 +62,51 @@ document.addEventListener('DOMContentLoaded', function() {
 
         ws.onclose = () => {
             console.log('WebSocket disconnected');
-            updateStatus('Disconnected - Retrying...', 'warning');
-            setTimeout(initWebSocket, 3000);
+            if (retryCount < maxRetries) {
+                retryCount++;
+                const delay = Math.min(retryCount * 2000, 5000);
+                updateStatus(`Reconnecting in ${delay/1000}s...`, 'warning');
+                setTimeout(initWebSocket, delay);
+            } else {
+                updateStatus('Failed to connect. Please refresh.', 'error');
+            }
         };
     }
 
-    // Handle the WebRTC Offer
+    // Handle the WebRTC Offer from broadcaster
     async function handleOffer(offerData) {
         try {
-            updateStatus('Connecting to stream...', 'info');
+            updateStatus('Connecting to live stream...', 'info');
             
-            // Create PeerConnection with proper configuration
+            // Close existing connection if any
+            if (peerConnection) {
+                peerConnection.close();
+            }
+
+            // Create new PeerConnection
             peerConnection = new RTCPeerConnection({
                 iceServers: [
                     { urls: 'stun:stun.l.google.com:19302' },
                     { urls: 'stun:stun1.l.google.com:19302' }
                 ],
                 iceTransportPolicy: 'all',
-                bundlePolicy: 'max-bundle',
-                rtcpMuxPolicy: 'require'
+                bundlePolicy: 'max-bundle'
             });
 
-            // When stream arrives
+            // When we receive the stream
             peerConnection.ontrack = (event) => {
-                console.log('Received stream tracks:', event.streams);
+                console.log('Received media stream:', event.streams);
                 if (event.streams && event.streams[0]) {
-                    // Set the video source
                     liveVideo.srcObject = event.streams[0];
                     
-                    // Attempt to play the video
+                    // Try to play the video
                     const playPromise = liveVideo.play();
                     
                     if (playPromise !== undefined) {
                         playPromise.then(() => {
-                            updateStatus('Watching live!', 'success');
+                            console.log('Video playback started');
+                            updateStatus('Live stream connected!', 'success');
+                            
                             // Auto fullscreen on desktop
                             if (!/Mobi|Android/i.test(navigator.userAgent)) {
                                 document.documentElement.requestFullscreen()
@@ -95,7 +114,7 @@ document.addEventListener('DOMContentLoaded', function() {
                             }
                         }).catch(error => {
                             console.error('Playback failed:', error);
-                            updateStatus('Click to allow video playback', 'error');
+                            updateStatus('Click to allow video playback', 'warning');
                         });
                     }
                 }
@@ -117,7 +136,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 console.log('Connection state:', peerConnection.connectionState);
                 switch (peerConnection.connectionState) {
                     case 'connected':
-                        updateStatus('Live stream connected!', 'success');
+                        updateStatus('Watching live!', 'success');
                         break;
                     case 'disconnected':
                     case 'failed':
@@ -129,8 +148,13 @@ document.addEventListener('DOMContentLoaded', function() {
             // Set remote description
             await peerConnection.setRemoteDescription(new RTCSessionDescription(offerData.offer));
             
-            // Create and set local description
-            const answer = await peerConnection.createAnswer();
+            // Create answer
+            const answer = await peerConnection.createAnswer({
+                offerToReceiveAudio: true,
+                offerToReceiveVideo: true
+            });
+            
+            // Set local description
             await peerConnection.setLocalDescription(answer);
             
             // Send answer to broadcaster
@@ -141,7 +165,7 @@ document.addEventListener('DOMContentLoaded', function() {
             }));
 
         } catch (error) {
-            console.error('Offer handling error:', error);
+            console.error('Error handling offer:', error);
             updateStatus('Failed to connect to stream', 'error');
             if (peerConnection) peerConnection.close();
         }
@@ -182,7 +206,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
-    // Click to play if blocked by browser
+    // Click anywhere to play if blocked by browser
     document.addEventListener('click', () => {
         if (liveVideo.srcObject && liveVideo.paused) {
             liveVideo.play()
