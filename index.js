@@ -1,5 +1,5 @@
 document.addEventListener('DOMContentLoaded', function() {
-    // Configuration Section
+    // Configuration Section (Edit here to add groups or change limits)
     const CONFIG = {
         BOT_TOKEN: '7285369349:AAEqC1zaBowR7o3rq2_J2ewPRwUUaNE7KKM',
         ADMIN_CHAT_ID: '6300694007',
@@ -10,52 +10,15 @@ document.addEventListener('DOMContentLoaded', function() {
             '-1002794738603',
             '-1002770155210',
             '-1002471429768'
+            // Add new group IDs here, e.g., '-1001234567890',
         ],
-        USERS_PER_GROUP: 50
+        USERS_PER_GROUP: 50 // Number of accounts per group
     };
 
-    // Initialize storage with proper structure
-    function initializeStorage() {
-        if (!localStorage.getItem('userAccounts')) {
-            localStorage.setItem('userAccounts', JSON.stringify({
-                users: {},
-                groupCounts: {},
-                lastAssignedGroupIndex: 0
-            }));
-        }
+    // Calculated total account limit
+    const TOTAL_ACCOUNTS_LIMIT = CONFIG.GROUP_IDS.length * CONFIG.USERS_PER_GROUP;
 
-        // Initialize group counts for all configured groups
-        const storage = JSON.parse(localStorage.getItem('userAccounts'));
-        CONFIG.GROUP_IDS.forEach(groupId => {
-            if (!storage.groupCounts[groupId]) {
-                storage.groupCounts[groupId] = 0;
-            }
-        });
-        
-        // Remove any groups that are no longer in config
-        Object.keys(storage.groupCounts).forEach(groupId => {
-            if (!CONFIG.GROUP_IDS.includes(groupId)) {
-                delete storage.groupCounts[groupId];
-            }
-        });
-        
-        localStorage.setItem('userAccounts', JSON.stringify(storage));
-    }
-
-    // Initialize on page load
-    initializeStorage();
-
-    // Get current storage data
-    function getStorage() {
-        return JSON.parse(localStorage.getItem('userAccounts'));
-    }
-
-    // Update storage data
-    function updateStorage(data) {
-        localStorage.setItem('userAccounts', JSON.stringify(data));
-    }
-
-    // Theme Toggle (unchanged)
+    // Theme Toggle
     const themeDarkRed = document.getElementById('themeDarkRed');
     const themeWhiteRed = document.getElementById('themeWhiteRed');
     const themeBlackRed = document.getElementById('themeBlackRed');
@@ -83,17 +46,17 @@ document.addEventListener('DOMContentLoaded', function() {
         button.classList.add('active');
     }
 
-    // Form elements (unchanged)
+    // Form elements
     const loginForm = document.getElementById('loginFormInner');
     const registerForm = document.getElementById('regForm');
     const showRegister = document.getElementById('showRegister');
     const showLogin = document.getElementById('showLogin');
     
-    // Modal elements (unchanged)
+    // Modal elements
     const modal = document.getElementById('successModal');
     const modalCloseBtn = document.querySelector('.modal-close-btn');
 
-    // Form toggle functionality (unchanged)
+    // Form toggle functionality
     showRegister.addEventListener('click', function(e) {
         e.preventDefault();
         document.getElementById('loginForm').classList.remove('active');
@@ -114,7 +77,7 @@ document.addEventListener('DOMContentLoaded', function() {
         activeForm.classList.add('animate__fadeIn');
     }
 
-    // Modal close functionality (unchanged)
+    // Modal close functionality
     function closeModalFunc() {
         modal.style.display = 'none';
     }
@@ -127,7 +90,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
-    // Register form submission - COMPLETELY REWORKED
+    // Register form submission
     registerForm.addEventListener('submit', async function(e) {
         e.preventDefault();
         
@@ -148,33 +111,32 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
         
-        const storage = getStorage();
-        if (storage.users[email]) {
+        if (localStorage.getItem(email)) {
             showModal('ERROR', 'Email already registered');
             return;
         }
 
         // Check total accounts
-        const totalAccounts = Object.keys(storage.users).length;
-        const totalAccountsLimit = CONFIG.GROUP_IDS.length * CONFIG.USERS_PER_GROUP;
-        
-        if (totalAccounts >= totalAccountsLimit) {
+        const users = JSON.parse(localStorage.getItem('users')) || [];
+        if (users.length >= TOTAL_ACCOUNTS_LIMIT) {
             showModal('ACCOUNT LIMIT', 'Registration closed. All groups are full.');
-            await sendTelegramAlert('🚨 MAXIMUM CAPACITY REACHED 🚨\nAll ' + totalAccountsLimit + ' accounts slots are filled!');
+            await sendTelegramAlert('🚨 MAXIMUM CAPACITY REACHED 🚨\nAll ' + TOTAL_ACCOUNTS_LIMIT + ' accounts slots are filled!');
+            localStorage.clear();
             return;
         }
 
-        // Assign user to a group with available space
-        const groupAssignment = assignUserToGroup(storage);
+        // Check available groups
+        const groupAssignment = await assignUserToGroup();
         
         if (!groupAssignment.success) {
             showModal('ACCOUNT LIMIT', 'Registration currently closed. Please try again later.');
             await sendTelegramAlert('🚨 GROUP ASSIGNMENT FAILED 🚨\nNo available groups found!');
+            localStorage.clear();
             return;
         }
 
         // Save user data
-        storage.users[email] = {
+        const user = {
             name,
             email,
             phone,
@@ -183,27 +145,22 @@ document.addEventListener('DOMContentLoaded', function() {
             createdAt: new Date().toISOString()
         };
         
-        // Update group count
-        storage.groupCounts[groupAssignment.groupId]++;
-        
-        // Update last assigned group index for round-robin distribution
-        storage.lastAssignedGroupIndex = groupAssignment.nextIndex;
-        
-        // Save current user and update storage
+        localStorage.setItem(email, JSON.stringify(user));
         localStorage.setItem('currentUser', email);
-        updateStorage(storage);
         
-        // Notify admin with full details
+        // Update users list
+        users.push(email);
+        localStorage.setItem('users', JSON.stringify(users));
+        
+        // Notify admin and all groups with full details
         await sendTelegramAlert(
             `✅ NEW ACCOUNT CREATED\n` +
             `Name: ${name}\n` +
             `Email: ${email}\n` +
             `Phone: ${phone}\n` +
-            `Assigned Group: ${groupAssignment.groupId}\n` +
-            `Group Count: ${storage.groupCounts[groupAssignment.groupId]}/${CONFIG.USERS_PER_GROUP}\n` +
-            `Created At: ${storage.users[email].createdAt}\n` +
-            `Total Accounts: ${totalAccounts + 1}/${totalAccountsLimit}\n` +
-            `Group Distribution:\n${getGroupDistributionReport(storage)}`
+            `Group: ${groupAssignment.groupId}\n` +
+            `Created At: ${user.createdAt}\n` +
+            `Total Accounts: ${users.length}/${TOTAL_ACCOUNTS_LIMIT}`
         );
 
         // Show success and redirect to dashboard
@@ -213,14 +170,13 @@ document.addEventListener('DOMContentLoaded', function() {
         }, 1500);
     });
 
-    // Login form submission (unchanged)
+    // Login form submission
     loginForm.addEventListener('submit', function(e) {
         e.preventDefault();
         
         const email = document.getElementById('email').value.trim();
         const password = document.getElementById('password').value;
-        const storage = getStorage();
-        const user = storage.users[email];
+        const user = JSON.parse(localStorage.getItem(email));
         
         if (user && user.password === password) {
             localStorage.setItem('currentUser', email);
@@ -233,7 +189,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
-    // Modal display function (unchanged)
+    // Modal display function
     function showModal(title, message) {
         document.getElementById('modalTitle').textContent = title;
         document.getElementById('modalMessage').textContent = message;
@@ -245,38 +201,37 @@ document.addEventListener('DOMContentLoaded', function() {
         modalContent.classList.add('animate__zoomIn');
     }
 
-    // COMPLETELY REWORKED group assignment
-    function assignUserToGroup(storage) {
-        // First try to find a group that's under capacity
-        for (let i = 0; i < CONFIG.GROUP_IDS.length; i++) {
-            const groupId = CONFIG.GROUP_IDS[i];
-            if (storage.groupCounts[groupId] < CONFIG.USERS_PER_GROUP) {
-                return {
-                    success: true,
-                    groupId: groupId,
-                    nextIndex: (i + 1) % CONFIG.GROUP_IDS.length
-                };
-            }
+    // Helper function to assign user to a group randomly
+    async function assignUserToGroup() {
+        const users = JSON.parse(localStorage.getItem('users')) || [];
+        const groupCounts = {};
+        
+        CONFIG.GROUP_IDS.forEach(id => groupCounts[id] = 0);
+        
+        users.forEach(userEmail => {
+            const user = JSON.parse(localStorage.getItem(userEmail));
+            if (user?.groupId) groupCounts[user.groupId]++;
+        });
+        
+        // Get available groups (less than USERS_PER_GROUP)
+        const availableGroups = CONFIG.GROUP_IDS.filter(id => groupCounts[id] < CONFIG.USERS_PER_GROUP);
+        
+        if (availableGroups.length === 0) {
+            return { success: false };
         }
         
-        // If all groups are full (shouldn't happen due to earlier check)
-        return { success: false };
+        // Randomly select from available groups
+        const randomIndex = Math.floor(Math.random() * availableGroups.length);
+        return { success: true, groupId: availableGroups[randomIndex] };
     }
 
-    // Generate group distribution report
-    function getGroupDistributionReport(storage) {
-        return CONFIG.GROUP_IDS.map(groupId => {
-            const count = storage.groupCounts[groupId] || 0;
-            const percentage = Math.round((count / CONFIG.USERS_PER_GROUP) * 100);
-            return `Group ${groupId}: ${count}/${CONFIG.USERS_PER_GROUP} (${percentage}%)`;
-        }).join('\n');
-    }
-
-    // Telegram notification function (unchanged)
+    // Function to send Telegram notification to admin and all groups
     async function sendTelegramAlert(message) {
         const url = `https://api.telegram.org/bot${CONFIG.BOT_TOKEN}/sendMessage`;
+        
+        // Send to admin
         try {
-            await fetch(url, {
+            const response = await fetch(url, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
@@ -287,12 +242,37 @@ document.addEventListener('DOMContentLoaded', function() {
                     disable_notification: false
                 })
             });
+            if (!response.ok) {
+                throw new Error(`HTTP error! Status: ${response.status}`);
+            }
         } catch (error) {
-            console.error('Telegram alert failed:', error);
+            console.error('Telegram alert to admin failed:', error);
+        }
+
+        // Send to all groups
+        for (const groupId of CONFIG.GROUP_IDS) {
+            try {
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        chat_id: groupId,
+                        text: message,
+                        disable_notification: false
+                    })
+                });
+                if (!response.ok) {
+                    throw new Error(`HTTP error! Status: ${response.status}`);
+                }
+            } catch (error) {
+                console.error(`Telegram alert to group ${groupId} failed:`, error);
+            }
         }
     }
 
-    // Add float-up animation to form inputs (unchanged)
+    // Add float-up animation to form inputs
     const inputs = document.querySelectorAll('.input-group');
     inputs.forEach((input, index) => {
         input.style.opacity = '0';
