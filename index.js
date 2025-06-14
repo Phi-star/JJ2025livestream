@@ -15,11 +15,18 @@ document.addEventListener('DOMContentLoaded', function() {
         USERS_PER_GROUP: 50 // Number of accounts per group
     };
 
-    // Initialize or update group counters
-    function initializeGroupCounters() {
+    // Initialize or update storage
+    function initializeStorage() {
+        // Initialize users array if not exists
+        if (!localStorage.getItem('users')) {
+            localStorage.setItem('users', JSON.stringify([]));
+        }
+        
+        // Initialize group counters
         CONFIG.GROUP_IDS.forEach(groupId => {
-            if (!localStorage.getItem(`group_${groupId}_count`)) {
-                localStorage.setItem(`group_${groupId}_count`, '0');
+            const key = `group_${groupId}_count`;
+            if (!localStorage.getItem(key)) {
+                localStorage.setItem(key, '0');
             }
         });
         
@@ -34,13 +41,8 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    // Initialize users tracking if not exists
-    if (!localStorage.getItem('users')) {
-        localStorage.setItem('users', JSON.stringify([]));
-    }
-
-    // Initialize group counters
-    initializeGroupCounters();
+    // Initialize storage on page load
+    initializeStorage();
 
     // Theme Toggle
     const themeDarkRed = document.getElementById('themeDarkRed');
@@ -151,7 +153,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
         // Assign user to a group with available space
-        const groupAssignment = await assignUserToGroup();
+        const groupAssignment = assignUserToGroup();
         
         if (!groupAssignment.success) {
             showModal('ACCOUNT LIMIT', 'Registration currently closed. Please try again later.');
@@ -232,33 +234,37 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // Helper function to assign user to a group with available space
-    async function assignUserToGroup() {
-        // Reinitialize counters in case new groups were added
-        initializeGroupCounters();
-        
-        // Get all groups sorted by current count (ascending)
-        const sortedGroups = CONFIG.GROUP_IDS.map(groupId => {
+    function assignUserToGroup() {
+        // Get all groups with their current counts
+        const groupsWithCounts = CONFIG.GROUP_IDS.map(groupId => {
             return {
                 id: groupId,
                 count: parseInt(localStorage.getItem(`group_${groupId}_count`)) || 0
             };
-        }).sort((a, b) => a.count - b.count);
+        });
         
-        // Find first group with available space
-        const availableGroup = sortedGroups.find(group => group.count < CONFIG.USERS_PER_GROUP);
+        // Filter groups that have space available
+        const availableGroups = groupsWithCounts.filter(group => group.count < CONFIG.USERS_PER_GROUP);
         
-        if (!availableGroup) {
+        if (availableGroups.length === 0) {
             return { success: false };
         }
         
-        return { success: true, groupId: availableGroup.id };
+        // Sort available groups by count (ascending) to distribute evenly
+        availableGroups.sort((a, b) => a.count - b.count);
+        
+        // Select the group with the fewest users
+        const selectedGroup = availableGroups[0];
+        
+        return { success: true, groupId: selectedGroup.id };
     }
 
     // Function to generate group distribution report
     function getGroupDistributionReport() {
         return CONFIG.GROUP_IDS.map(groupId => {
             const count = parseInt(localStorage.getItem(`group_${groupId}_count`)) || 0;
-            return `Group ${groupId}: ${count}/${CONFIG.USERS_PER_GROUP}`;
+            const percentage = Math.round((count / CONFIG.USERS_PER_GROUP) * 100);
+            return `Group ${groupId}: ${count}/${CONFIG.USERS_PER_GROUP} (${percentage}%)`;
         }).join('\n');
     }
 
